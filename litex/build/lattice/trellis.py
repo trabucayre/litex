@@ -18,6 +18,8 @@ from litex.build.generic_platform import *
 from litex.build import tools
 from litex.build.lattice import common
 from litex.build.generic_toolchain import GenericToolchain
+from litex.build.nextpnr_wrapper import NextPNRWrapper
+from litex.build.yosys_wrapper import YosysWrapper
 
 # LatticeTrellisToolchain --------------------------------------------------------------------------
 
@@ -30,8 +32,9 @@ class LatticeTrellisToolchain(GenericToolchain):
 
     def __init__(self):
         super().__init__()
-        self.yosys_template   = self._yosys_template
         self.build_template   = self._build_template
+        self._yosys           = None
+        self._nextpnr         = None
 
     def build(self, platform, fragment,
         nowidelut      = False,
@@ -56,6 +59,30 @@ class LatticeTrellisToolchain(GenericToolchain):
         self._compress     = compress
 
         return GenericToolchain.build(self, platform, fragment, **kwargs)
+
+    def finalize(self):
+        # Translate device to Nextpnr architecture/package
+        (family, size, speed_grade, package) = self.nextpnr_ecp5_parse_device(self.platform.device)
+        architecture = self.nextpnr_ecp5_architectures[(family + "-" + size)]
+
+        self._yosys = YosysWrapper(self.platform, self._build_name,
+                nowidelut = self._nowidelut,
+                abc9      = self._abc9,
+                synth_format="json")
+
+        # NextPnr options
+        self._nextpnr = NextPNRWrapper(
+                family            = "ecp5",
+                architecture      = architecture,
+                package           = package,
+                speed             = speed_grade,
+                build_name        = self._build_name,
+                in_format         = "json",
+                out_format        = "config",
+                constr_format     = "lpf",
+                timing_allow_fail = not self._timingstrict,
+                ignore_loops      = self._ignoreloops,
+                seed              = self._seed)
 
     # IO Constraints (.lpf) ------------------------------------------------------------------------
 
@@ -89,42 +116,10 @@ class LatticeTrellisToolchain(GenericToolchain):
             lpf.append("\n\n".join(self.named_pc))
         tools.write_to_file(self._build_name + ".lpf", "\n".join(lpf))
 
-    # Yosys Helpers/Templates ----------------------------------------------------------------------
-
-    _yosys_template = [
-        "verilog_defaults -push",
-        "verilog_defaults -add -defer",
-        "{read_files}",
-        "verilog_defaults -pop",
-        "attrmap -tocase keep -imap keep=\"true\" keep=1 -imap keep=\"false\" keep=0 -remove keep=0",
-        "synth_ecp5 {nwl} {abc} -json {build_name}.json -top {build_name}",
-    ]
-
-    def _yosys_import_sources(self):
-        includes = ""
-        reads = []
-        for path in self.platform.verilog_include_paths:
-            includes += " -I" + path
-        for filename, language, library, *copy in self.platform.sources:
-            # yosys has no such function read_systemverilog
-            if language == "systemverilog":
-                language = "verilog -sv"
-            reads.append("read_{}{} {}".format(
-                language, includes, filename))
-        return "\n".join(reads)
-
     # Project (.ys) --------------------------------------------------------------------------------
 
     def build_project(self):
-        ys = []
-        for l in self._yosys_template:
-            ys.append(l.format(
-                build_name = self._build_name,
-                nwl        = "-nowidelut" if self._nowidelut else "",
-                abc        = "-abc9" if self._abc9 else "",
-                read_files = self._yosys_import_sources()
-            ))
-        tools.write_to_file(self._build_name + ".ys", "\n".join(ys))
+        self._yosys.build_script()
 
     # NextPnr Helpers/Templates --------------------------------------------------------------------
 
@@ -166,17 +161,10 @@ class LatticeTrellisToolchain(GenericToolchain):
     # Script ---------------------------------------------------------------------------------------
 
     _build_template = [
-        "yosys -l {build_name}.rpt {build_name}.ys",
-        "nextpnr-ecp5 --json {build_name}.json --lpf {build_name}.lpf --textcfg {build_name}.config  \
-    --{architecture} --package {package} --speed {speed_grade} {timefailarg} {ignoreloops} --seed {seed}",
         "ecppack {build_name}.config --svf {build_name}.svf --bit {build_name}.bit --bootaddr {bootaddr} {spimode} {freq} {compress}"
     ]
 
     def build_script(self):
-        # Translate device to Nextpnr architecture/package
-        (family, size, speed_grade, package) = self.nextpnr_ecp5_parse_device(self.platform.device)
-        architecture = self.nextpnr_ecp5_architectures[(family + "-" + size)]
-
         if sys.platform in ("win32", "cygwin"):
             script_ext = ".bat"
             script_contents = "@echo off\nrem Autogenerated by LiteX / git: " + tools.get_litex_git_revision() + "\n\n"
@@ -198,21 +186,18 @@ class LatticeTrellisToolchain(GenericToolchain):
         if self._freq is not None:
             assert self._freq in ecp5_mclk_freqs, "Invalid MCLK frequency. Valid frequencies: " + str(ecp5_mclk_freqs)
 
+        script_contents += self._yosys.get_yosys_call() + fail_stmt
+        script_contents += self._nextpnr.get_call() + fail_stmt
+
         for s in self._build_template:
             s_fail = s + "{fail_stmt}\n"  # Required so Windows scripts fail early.
             script_contents += s_fail.format(
-                build_name      = self._build_name,
-                architecture    = architecture,
-                package         = package,
-                speed_grade     = speed_grade,
-                timefailarg     = "--timing-allow-fail" if not self._timingstrict else "",
-                ignoreloops     = "--ignore-loops" if self._ignoreloops else "",
-                bootaddr        = self._bootaddr,
-                fail_stmt       = fail_stmt,
-                seed            = self._seed,
-                spimode         = "" if self._spimode is None else f"--spimode {self._spimode}",
-                freq            = "" if self._freq is None else "--freq {}".format(self._freq),
-                compress        = "" if not self._compress else "--compress")
+                build_name = self._build_name,
+                bootaddr   = self._bootaddr,
+                fail_stmt  = fail_stmt,
+                spimode    = "" if self._spimode is None else f"--spimode {self._spimode}",
+                freq       = "" if self._freq is None else "--freq {}".format(self._freq),
+                compress   = "" if not self._compress else "--compress")
 
         script_file = "build_" + self._build_name + script_ext
         tools.write_to_file(script_file, script_contents, force_unix=False)
