@@ -32,10 +32,14 @@ class LatticeIceStormToolchain(GenericToolchain):
 
     def __init__(self):
         super().__init__()
-        self._synth_opts    = "-dsp"
-        self._pnr_opts      = ""
-        self._yosys         = None
-        self._nextpnr       = None
+        self._synth_opts           = "-dsp"
+        self._pnr_opts             = ""
+        self._yosys                = None
+        self._nextpnr              = None
+        self._yosys_template       = []
+        self._yosys_pre_cmds       = []
+        self._yosys_pre_synth_cmds = []
+        self._yosys_post_synth_cmds= []
 
     def build(self, platform, fragment,
         timingstrict   = False,
@@ -54,6 +58,9 @@ class LatticeIceStormToolchain(GenericToolchain):
         (target, self.architecture, self.package) = self.parse_device()
 
         self._yosys = YosysWrapper(self.platform, self._build_name,
+                template=self._yosys_template, yosys_pre_cmds=self._yosys_pre_cmds,
+                yosys_pre_synth_cmds=self._yosys_pre_synth_cmds,
+                yosys_post_synth_cmds=self._yosys_post_synth_cmds,
                 yosys_opts=self._synth_opts, synth_format="json")
 
         # NextPnr options
