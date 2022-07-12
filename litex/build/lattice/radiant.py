@@ -119,10 +119,8 @@ class LatticeRadiantToolchain(GenericToolchain):
         ]
 
         self._yosys = YosysWrapper(self.platform, self._build_name,
-                output_name=self._build_name+"_yosys",
-                template=[], yosys_pre_cmds=[],
-                yosys_pre_synth_cmds=yosys_cmds,
-                yosys_post_synth_cmds=[],
+                output_name=self._build_name+"_yosys", target="nexus",
+                template=[], yosys_cmds=yosys_cmds,
                 yosys_opts=self._synth_opts, synth_format="vm")
 
     # Constraints (.ldc) ---------------------------------------------------------------------------
@@ -228,10 +226,10 @@ class LatticeRadiantToolchain(GenericToolchain):
             shell = ["bash"]
             tool  = "radiantc"
 
-        if which(tool) is None:
-            msg = "Unable to find Radiant toolchain, please:\n"
-            msg += "- Add Radiant toolchain to your $PATH."
-            raise OSError(msg)
+        #if which(tool) is None:
+        #    msg = "Unable to find Radiant toolchain, please:\n"
+        #    msg += "- Add Radiant toolchain to your $PATH."
+        #    raise OSError(msg)
 
         if which("yosys") is None:
             msg = "Unable to find Yosys toolchain, please:\n"

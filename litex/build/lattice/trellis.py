@@ -66,9 +66,10 @@ class LatticeTrellisToolchain(GenericToolchain):
         architecture = self.nextpnr_ecp5_architectures[(family + "-" + size)]
 
         self._yosys = YosysWrapper(self.platform, self._build_name,
-                nowidelut = self._nowidelut,
-                abc9      = self._abc9,
-                synth_format="json")
+                target       = "ecp5",
+                nowidelut    = self._nowidelut,
+                abc9         = self._abc9,
+                synth_format ="json")
 
         # NextPnr options
         self._nextpnr = NextPNRWrapper(
