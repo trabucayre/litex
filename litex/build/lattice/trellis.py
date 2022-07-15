@@ -17,73 +17,64 @@ from migen.fhdl.structure import _Fragment
 from litex.build.generic_platform import *
 from litex.build import tools
 from litex.build.lattice import common
-from litex.build.generic_toolchain import GenericToolchain
-from litex.build.nextpnr_wrapper import NextPNRWrapper
-from litex.build.yosys_wrapper import YosysWrapper
+from litex.build.yosys_nextpnr_toolchain import YosysNextPRNToolchain
 
 # LatticeTrellisToolchain --------------------------------------------------------------------------
 
-class LatticeTrellisToolchain(GenericToolchain):
+class LatticeTrellisToolchain(YosysNextPRNToolchain):
     attr_translate = {
         "keep": ("keep", "true"),
     }
+
+    family     = "ecp5"
+    synth_fmt  = "json"
+    constr_fmt = "lpf"
+    pnr_fmt    = "config"
 
     special_overrides = common.lattice_ecp5_trellis_special_overrides
 
     def __init__(self):
         super().__init__()
-        self.build_template   = self._build_template
-        self._yosys           = None
-        self._nextpnr         = None
 
     def build(self, platform, fragment,
-        nowidelut      = False,
-        abc9           = False,
-        timingstrict   = False,
-        ignoreloops    = False,
         bootaddr       = 0,
-        seed           = 1,
         spimode        = None,
         freq           = None,
         compress       = True,
         **kwargs):
 
-        self._nowidelut    = nowidelut
-        self._abc9         = abc9
-        self._timingstrict = timingstrict
-        self._ignoreloops  = ignoreloops
-        self._bootaddr     = bootaddr
-        self._seed         = seed
-        self._spimode      = spimode
-        self._freq         = freq
-        self._compress     = compress
+        # Validate options
+        ecp5_mclk_freqs = [
+            2.4,
+            4.8,
+            9.7,
+            19.4,
+            38.8,
+            62.0,
+        ]
+        if freq is not None:
+            assert freq in ecp5_mclk_freqs, "Invalid MCLK frequency. Valid frequencies: " + str(ecp5_mclk_freqs)
 
-        return GenericToolchain.build(self, platform, fragment, **kwargs)
+        # prepare ecppack opts
+        self._packer_opts += " --bootaddr {bootaddr} {spimode} {freq} {compress} ".format(
+            bootaddr = bootaddr,
+            spimode  = "" if spimode is None else f"--spimode {spimode}",
+            freq     = "" if freq is None else "--freq {}".format(freq),
+            compress = "" if not compress else "--compress"
+        )
+
+        return YosysNextPRNToolchain.build(self, platform, fragment, **kwargs)
 
     def finalize(self):
         # Translate device to Nextpnr architecture/package
-        (family, size, speed_grade, package) = self.nextpnr_ecp5_parse_device(self.platform.device)
-        architecture = self.nextpnr_ecp5_architectures[(family + "-" + size)]
+        (family, size, self._speed_grade, self._package) = self.nextpnr_ecp5_parse_device(self.platform.device)
+        self._architecture = self.nextpnr_ecp5_architectures[(family + "-" + size)]
 
-        self._yosys = YosysWrapper(self.platform, self._build_name,
-                target       = "ecp5",
-                nowidelut    = self._nowidelut,
-                abc9         = self._abc9,
-                synth_format ="json")
-
-        # NextPnr options
-        self._nextpnr = NextPNRWrapper(
-                family            = "ecp5",
-                architecture      = architecture,
-                package           = package,
-                speed             = speed_grade,
-                build_name        = self._build_name,
-                in_format         = "json",
-                out_format        = "config",
-                constr_format     = "lpf",
-                timing_allow_fail = not self._timingstrict,
-                ignore_loops      = self._ignoreloops,
-                seed              = self._seed)
+        self._packer_cmd = "ecppack {build_name}.config --svf {build_name}.svf --bit {build_name}.bit {packer_opt}".format(
+                build_name = self._build_name,
+                packer_opt = self._packer_opts
+        )
+        return YosysNextPRNToolchain.finalize(self)
 
     # IO Constraints (.lpf) ------------------------------------------------------------------------
 
@@ -116,11 +107,6 @@ class LatticeTrellisToolchain(GenericToolchain):
         if self.named_pc:
             lpf.append("\n\n".join(self.named_pc))
         tools.write_to_file(self._build_name + ".lpf", "\n".join(lpf))
-
-    # Project (.ys) --------------------------------------------------------------------------------
-
-    def build_project(self):
-        self._yosys.build_script()
 
     # NextPnr Helpers/Templates --------------------------------------------------------------------
 
@@ -158,66 +144,6 @@ class LatticeTrellisToolchain(GenericToolchain):
         "lfe5um5g-45f": "um5g-45k",
         "lfe5um5g-85f": "um5g-85k",
     }
-
-    # Script ---------------------------------------------------------------------------------------
-
-    _build_template = [
-        "ecppack {build_name}.config --svf {build_name}.svf --bit {build_name}.bit --bootaddr {bootaddr} {spimode} {freq} {compress}"
-    ]
-
-    def build_script(self):
-        if sys.platform in ("win32", "cygwin"):
-            script_ext = ".bat"
-            script_contents = "@echo off\nrem Autogenerated by LiteX / git: " + tools.get_litex_git_revision() + "\n\n"
-            fail_stmt = " || exit /b"
-        else:
-            script_ext = ".sh"
-            script_contents = "# Autogenerated by LiteX / git: " + tools.get_litex_git_revision() + "\nset -e\n"
-            fail_stmt = ""
-
-        # Validate options
-        ecp5_mclk_freqs = [
-            2.4,
-            4.8,
-            9.7,
-            19.4,
-            38.8,
-            62.0,
-        ]
-        if self._freq is not None:
-            assert self._freq in ecp5_mclk_freqs, "Invalid MCLK frequency. Valid frequencies: " + str(ecp5_mclk_freqs)
-
-        script_contents += self._yosys.get_yosys_call() + fail_stmt
-        script_contents += self._nextpnr.get_call() + fail_stmt
-
-        for s in self._build_template:
-            s_fail = s + "{fail_stmt}\n"  # Required so Windows scripts fail early.
-            script_contents += s_fail.format(
-                build_name = self._build_name,
-                bootaddr   = self._bootaddr,
-                fail_stmt  = fail_stmt,
-                spimode    = "" if self._spimode is None else f"--spimode {self._spimode}",
-                freq       = "" if self._freq is None else "--freq {}".format(self._freq),
-                compress   = "" if not self._compress else "--compress")
-
-        script_file = "build_" + self._build_name + script_ext
-        tools.write_to_file(script_file, script_contents, force_unix=False)
-
-        return script_file
-
-    def run_script(self, script):
-        if sys.platform in ("win32", "cygwin"):
-            shell = ["cmd", "/c"]
-        else:
-            shell = ["bash"]
-
-        if which("yosys") is None or which("nextpnr-ecp5") is None:
-            msg = "Unable to find Yosys/Nextpnr toolchain, please:\n"
-            msg += "- Add Yosys/Nextpnr toolchain to your $PATH."
-            raise OSError(msg)
-
-        if subprocess.call(shell + [script]) != 0:
-            raise OSError("Error occured during Yosys/Nextpnr's script execution.")
 
     def add_period_constraint(self, platform, clk, period):
         platform.add_platform_command("""FREQUENCY PORT "{clk}" {freq} MHz;""".format(

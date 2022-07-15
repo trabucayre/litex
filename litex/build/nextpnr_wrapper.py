@@ -39,6 +39,7 @@ class NextPNRWrapper():
         kwargs: dict
             alternate options key/value
         """
+        self.name = f"nextpnr-{family}"
         self._target = family
         self._build_name = build_name
         self._in_format = in_format
@@ -52,7 +53,8 @@ class NextPNRWrapper():
             if isinstance(value, bool):
                 self._pnr_opts += f"--{key} " if value else ""
             else:
-                self._pnr_opts += f"--{key} {value} "
+                if value != "":
+                    self._pnr_opts += f"--{key} {value} "
 
     def get_call(self, target="script"):
         """built a script command or a Makefile rule + command
@@ -66,12 +68,12 @@ class NextPNRWrapper():
         =======
         str containing instruction and/or rule
         """
-        cmd = "nextpnr-{target} --{in_fmt} {build_name}.{in_fmt} --{constr_fmt}" + \
+        cmd = "{pnr_name} --{in_fmt} {build_name}.{in_fmt} --{constr_fmt}" + \
             " {build_name}.{constr_fmt}" + \
             " --{out_fmt} {build_name}.{out_ext} {pnr_opts}\n"
         base_cmd = cmd.format(
+                pnr_name=self.name,
                 build_name=self._build_name,
-                target=self._target,
                 in_fmt=self._in_format,
                 out_fmt="textcfg" if self._out_format == "config" else self._out_format,
                 out_ext=self._out_format,
