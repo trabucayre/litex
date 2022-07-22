@@ -226,10 +226,10 @@ class LatticeRadiantToolchain(GenericToolchain):
             shell = ["bash"]
             tool  = "radiantc"
 
-        #if which(tool) is None:
-        #    msg = "Unable to find Radiant toolchain, please:\n"
-        #    msg += "- Add Radiant toolchain to your $PATH."
-        #    raise OSError(msg)
+        if which(tool) is None:
+            msg = "Unable to find Radiant toolchain, please:\n"
+            msg += "- Add Radiant toolchain to your $PATH."
+            raise OSError(msg)
 
         if which("yosys") is None:
             msg = "Unable to find Yosys toolchain, please:\n"
