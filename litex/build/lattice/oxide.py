@@ -40,7 +40,7 @@ class LatticeOxideToolchain(YosysNextPRNToolchain):
 
     def __init__(self):
         super().__init__()
-        self._synth_opts = "-flatten"
+        self._synth_opts = "-flatten "
 
     def build(self, platform, fragment, es_device = False, **kwargs):
 
