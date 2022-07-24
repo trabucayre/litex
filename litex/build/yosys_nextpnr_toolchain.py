@@ -7,23 +7,58 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 
-import os
 import sys
 import subprocess
 from shutil import which
 
-from migen.fhdl.structure import _Fragment
-
-from litex.build.generic_platform import *
 from litex.build import tools
-from litex.build.lattice import common
 from litex.build.generic_toolchain import GenericToolchain
 from litex.build.nextpnr_wrapper import NextPNRWrapper
 from litex.build.yosys_wrapper import YosysWrapper
 
-# YosysNextPRNToolchain -------------------------------------------------------------------------
+# YosysNextPNRToolchain -------------------------------------------------------------------------
 
-class YosysNextPRNToolchain(GenericToolchain):
+class YosysNextPNRToolchain(GenericToolchain):
+    """
+    YosysNextPNRToolchain wrapper for toolchain based on yosys + NextPNR
+    Attributes
+    ==========
+    family: str
+        target family (ice40, ecp5, nexus, xilinx, ...)
+    synth_fmt: str
+        synthesys output extension (json, verilog, ...)
+    constr_fmt: str
+        constraints file extension (pcf, lpf, xdc, ...)
+    pnr_fmt: str
+        PNR output extension (fasm, asc, ...)
+    _synth_opts: str
+        Yosys options
+    _pnr_opts: str
+        nextpnr options
+    _pre_packer_cmd: list str
+        optional list of command to run after PNR and before packer
+    _pre_packer_opts: dict
+        optional options to pass to pre_packer command (key refers to
+        _pre_packer_cmd)
+    _packer_cmd: str
+        packer command
+    _pre_packer_opts: str
+        options for packer
+    _yosys: YosysWrapper
+        Yosys wrapper instance
+    _nextpnr: NextPNRWrapper
+        nextpnr wrapper instance
+    _yosys_template: list
+        optional template to use instead of default
+    _yosys_cmds: list
+        optional list of commands to run before synthesis_xxx
+    _architecture: str
+        target architecture (optional/target dependant)
+    _package: str
+        target package  (optional/target dependant)
+    _speed_grade: str
+        target speed grade (optional/target dependant)
+    """
     attr_translate = {
         "keep": ("keep", "true"),
     }
@@ -35,17 +70,19 @@ class YosysNextPRNToolchain(GenericToolchain):
 
     def __init__(self):
         super().__init__()
-        self._synth_opts       = ""
-        self._pnr_opts         = ""
-        self._packer_opts      = ""
-        self._packer_cmd       = ""
-        self._yosys            = None
-        self._nextpnr          = None
-        self._yosys_template   = []
-        self._yosys_cmds       = []
-        self._architecture     = ""
-        self._package          = ""
-        self._speed_grade      = ""
+        self._synth_opts      = ""
+        self._pnr_opts        = ""
+        self._pre_packer_cmd  = []
+        self._pre_packer_opts = {}
+        self._packer_cmd      = ""
+        self._packer_opts     = ""
+        self._yosys           = None
+        self._nextpnr         = None
+        self._yosys_template  = []
+        self._yosys_cmds      = []
+        self._architecture    = ""
+        self._package         = ""
+        self._speed_grade     = ""
 
     def build(self, platform, fragment,
         nowidelut    = False,
@@ -54,6 +91,23 @@ class YosysNextPRNToolchain(GenericToolchain):
         ignoreloops  = False,
         seed         = 1,
         **kwargs):
+        """
+        Parameters
+        ==========
+        platform : GenericPlatform subclass
+            current platform.
+        nowidelut : str
+            do not use mux resources to implement LUTs larger
+            than native for the target (Yosys)
+        abc9 : str
+            use new ABC9 flow (Yosys)
+        timingstrict : list
+            check timing failures (nextpnr)
+        ignoreloops : str
+            ignore combinational loops in timing analysis (nextpnr)
+        kwargs: dict
+            list of key/value [optional]
+        """
 
         self._nowidelut   = nowidelut
         self._abc9        = abc9 
@@ -64,6 +118,9 @@ class YosysNextPRNToolchain(GenericToolchain):
         return GenericToolchain.build(self, platform, fragment, **kwargs)
 
     def finalize(self):
+        """" finalize build: create Yosys and nextpnr wrapper with required
+            parameters/options
+        """
         self._yosys = YosysWrapper(
             platform     = self.platform,
             build_name   = self._build_name,
@@ -93,11 +150,20 @@ class YosysNextPRNToolchain(GenericToolchain):
         )
 
     def build_project(self):
+        """ create project files (mainly Yosys ys file)
+        """
         self._yosys.build_script()
 
     # Script ---------------------------------------------------------------------------------------
 
     def build_script(self):
+        """ create build_xxx.yy by using Yosys and nextpnr instances, one or
+            more cmd between PNR and packer and finaly packer command + options
+            provided by subclass
+            Return
+            ======
+                the script name (str)
+        """
 
         if sys.platform in ("win32", "cygwin"):
             script_ext = ".bat"
@@ -112,8 +178,11 @@ class YosysNextPRNToolchain(GenericToolchain):
         script_contents += self._yosys.get_yosys_call("script") + fail_stmt
         # nextpnr call
         script_contents += self._nextpnr.get_call("script") + fail_stmt
+        # pre packer (command to use after PNR step and before packer step)
+        for pre_packer in self._pre_packer_cmd:
+            script_contents += f"{pre_packer} {self._pre_packer_opts[pre_packer]} {fail_stmt}\n"
         # packer call
-        script_contents += self._packer_cmd + fail_stmt
+        script_contents += f"{self._packer_cmd} {self._packer_opts} {fail_stmt}"
 
         script_file = "build_" + self._build_name + script_ext
         tools.write_to_file(script_file, script_contents, force_unix=False)
@@ -121,6 +190,12 @@ class YosysNextPRNToolchain(GenericToolchain):
         return script_file
 
     def run_script(self, script):
+        """ run build_xxx.yy script
+        Parameters
+        ==========
+        script: str
+            script name to use
+        """
         if sys.platform in ("win32", "cygwin"):
             shell = ["cmd", "/c"]
         else:
@@ -133,3 +208,6 @@ class YosysNextPRNToolchain(GenericToolchain):
 
         if subprocess.call(shell + [script]) != 0:
             raise OSError("Error occured during Yosys/Nextpnr's script execution.")
+
+    def build_io_constraints(self):
+        raise NotImplementedError("GenericToolchain.build_io_constraints must be overloaded.")
