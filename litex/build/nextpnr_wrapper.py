@@ -45,7 +45,7 @@ class NextPNRWrapper():
         self._in_format = in_format
         self._out_format = out_format
         self._constr_format = constr_format
-        self._pnr_opts = pnr_opts
+        self._pnr_opts = pnr_opts + " "
         self._pnr_opts += f"--{architecture} " if architecture != "" else ""
         self._pnr_opts += f"--package {package} " if package != "" else ""
         for key,value in kwargs.items():
