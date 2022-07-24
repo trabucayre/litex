@@ -17,11 +17,11 @@ from migen.fhdl.structure import _Fragment
 from litex.build.generic_platform import *
 from litex.build import tools
 from litex.build.lattice import common
-from litex.build.yosys_nextpnr_toolchain import YosysNextPRNToolchain
+from litex.build.yosys_nextpnr_toolchain import YosysNextPNRToolchain
 
 # LatticeIceStormToolchain -------------------------------------------------------------------------
 
-class LatticeIceStormToolchain(YosysNextPRNToolchain):
+class LatticeIceStormToolchain(YosysNextPNRToolchain):
     attr_translate = {
         "keep": ("keep", "true"),
     }
@@ -43,9 +43,9 @@ class LatticeIceStormToolchain(YosysNextPRNToolchain):
         # Translate device to Nextpnr architecture/package
         (_, self._architecture, self._package) = self.parse_device()
         self._pnr_opts += f" --pre-pack {self._build_name}_pre_pack.py "
-        self._packer_cmd = f"icepack {self._packer_opts} {self._build_name}.asc {self._build_name}.bin"
+        self._packer_cmd = f"icepack {self._build_name}.asc {self._build_name}.bin"
 
-        YosysNextPRNToolchain.finalize(self)
+        YosysNextPNRToolchain.finalize(self)
 
     # IO Constraints (.pcf) ------------------------------------------------------------------------
 

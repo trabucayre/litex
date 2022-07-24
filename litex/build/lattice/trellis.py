@@ -17,11 +17,11 @@ from migen.fhdl.structure import _Fragment
 from litex.build.generic_platform import *
 from litex.build import tools
 from litex.build.lattice import common
-from litex.build.yosys_nextpnr_toolchain import YosysNextPRNToolchain
+from litex.build.yosys_nextpnr_toolchain import YosysNextPNRToolchain
 
 # LatticeTrellisToolchain --------------------------------------------------------------------------
 
-class LatticeTrellisToolchain(YosysNextPRNToolchain):
+class LatticeTrellisToolchain(YosysNextPNRToolchain):
     attr_translate = {
         "keep": ("keep", "true"),
     }
@@ -63,18 +63,17 @@ class LatticeTrellisToolchain(YosysNextPRNToolchain):
             compress = "" if not compress else "--compress"
         )
 
-        return YosysNextPRNToolchain.build(self, platform, fragment, **kwargs)
+        return YosysNextPNRToolchain.build(self, platform, fragment, **kwargs)
 
     def finalize(self):
         # Translate device to Nextpnr architecture/package
         (family, size, self._speed_grade, self._package) = self.nextpnr_ecp5_parse_device(self.platform.device)
         self._architecture = self.nextpnr_ecp5_architectures[(family + "-" + size)]
 
-        self._packer_cmd = "ecppack {build_name}.config --svf {build_name}.svf --bit {build_name}.bit {packer_opt}".format(
+        self._packer_cmd = "ecppack {build_name}.config --svf {build_name}.svf --bit {build_name}.bit".format(
                 build_name = self._build_name,
-                packer_opt = self._packer_opts
         )
-        return YosysNextPRNToolchain.finalize(self)
+        return YosysNextPNRToolchain.finalize(self)
 
     # IO Constraints (.lpf) ------------------------------------------------------------------------
 

@@ -18,14 +18,14 @@ from litex.build.generic_toolchain import GenericToolchain
 from litex.build import tools
 from litex.build.lattice import common
 from litex.build.lattice.radiant import _format_constraint, _format_ldc, _build_pdc
-from litex.build.yosys_nextpnr_toolchain import YosysNextPRNToolchain
+from litex.build.yosys_nextpnr_toolchain import YosysNextPNRToolchain
 
 import math
 
 
 # LatticeOxideToolchain --------------------------------------------------------------------------
 
-class LatticeOxideToolchain(YosysNextPRNToolchain):
+class LatticeOxideToolchain(YosysNextPNRToolchain):
     attr_translate = {
         "keep": ("keep", "true"),
         "syn_useioff": ("syn_useioff", 1),
@@ -49,11 +49,11 @@ class LatticeOxideToolchain(YosysNextPRNToolchain):
             ES     = "ES" if es_device else ""
         )
 
-        return YosysNextPRNToolchain.build(self, platform, fragment, **kwargs)
+        return YosysNextPNRToolchain.build(self, platform, fragment, **kwargs)
 
     def finalize(self):
         self._packer_cmd = f"prjoxide pack {self._build_name}.fasm {self._build_name}.bit"
-        YosysNextPRNToolchain.finalize(self)
+        YosysNextPNRToolchain.finalize(self)
 
     # Constraints (.ldc) ---------------------------------------------------------------------------
 
