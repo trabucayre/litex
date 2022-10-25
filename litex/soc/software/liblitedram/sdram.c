@@ -29,7 +29,7 @@
 
 //#define SDRAM_TEST_DISABLE
 //#define SDRAM_WRITE_LEVELING_CMD_DELAY_DEBUG
-//#define SDRAM_WRITE_LATENCY_CALIBRATION_DEBUG
+#define SDRAM_WRITE_LATENCY_CALIBRATION_DEBUG
 //#define SDRAM_LEVELING_SCAN_DISPLAY_HEX_DIV 10
 
 #ifdef CSR_SDRAM_BASE
@@ -362,6 +362,7 @@ static unsigned int sdram_write_read_check_test_pattern(int module, unsigned int
 		}
 	}
 
+	errors = 0;
 #if defined(SDRAM_PHY_ECP5DDRPHY) || defined(SDRAM_PHY_GW2DDRPHY)
 	if (((ddrphy_burstdet_seen_read() >> module) & 0x1) != 1)
 		errors += 1;
@@ -807,7 +808,75 @@ static void sdram_write_leveling_find_cmd_delay(unsigned int *best_error, unsign
 #endif
 	}
 }
+#if defined(SDRAM_PHY_GW2DDRPHY)
+int sdram_write_leveling(void)
+{
+	int wlevel;
+	int dq_val;
+	int module;
+	char start = 0;
+	char wlevel_start = 0, wlevel_end = 0;
+	char wlevel_tgt = 0;
+	char valid_step = 0;
+	sdram_write_leveling_on();
 
+	/* Reset DQS delay */
+	for (module = 0; module < 2; module++) {
+		ddrphy_dly_sel_write(1 << module);
+		ddrphy_wdly_dqs_rst_write(1);
+		cdelay(100);
+		ddrphy_dly_sel_write(0);
+	}
+
+	for (wlevel = 0; wlevel < 128; wlevel++) {
+		ddrphy_wlevel_strobe_write(1);
+		cdelay(100);
+		dq_val = ddrphy_dq_detect_read();
+		if ((dq_val & 0x01) != 0 && ((dq_val >> 8) & 0x01) != 0) {
+			valid_step++;
+			if (start == 0) {
+				wlevel_start = wlevel;
+				start = 1;
+			}
+		} else if (start == 1) {
+			wlevel_end = wlevel;
+			break;
+		}
+		printf("wlevel %d : %04x\n", wlevel, dq_val);
+		cdelay(100);
+		for (module = 0; module < 2; module++) {
+			ddrphy_dly_sel_write(1 << module);
+			ddrphy_wdly_dqs_inc_write(1);
+			cdelay(100);
+			ddrphy_dly_sel_write(0);
+		}
+	}
+
+	if (start == 1 && wlevel_end == 0)
+		wlevel_end = 127;
+
+	if (wlevel_start == 0 && wlevel_end == 0) {
+		printf("not found\n");
+	} else {
+		wlevel_tgt = ((wlevel_end - wlevel_start)/2) + wlevel_start;
+		wlevel_tgt = wlevel_start + 10;
+		printf("found %d steps: %d -> %d : config %d \n", valid_step,
+			wlevel_start, wlevel_end, wlevel_tgt);
+	}
+
+	for (module = 0; module < 2; module++) {
+		ddrphy_dly_sel_write(1 << module);
+		ddrphy_wdly_dqs_rst_write(1);
+		for (wlevel = 0; wlevel < wlevel_tgt; wlevel++)
+			ddrphy_wdly_dqs_inc_write(1);
+		ddrphy_dly_sel_write(0);
+	}
+
+	sdram_write_leveling_off();
+	return wlevel_tgt;
+}
+
+#else
 int sdram_write_leveling(void)
 {
 	int delays[SDRAM_PHY_MODULES];
@@ -881,6 +950,7 @@ int sdram_write_leveling(void)
 
 	return best_cdly >= 0;
 }
+#endif
 
 #endif /*  SDRAM_PHY_WRITE_LEVELING_CAPABLE */
 
