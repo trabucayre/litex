@@ -390,6 +390,26 @@ class Zynq7000(CPU):
         })
         return axi_hpn
 
+    @property
+    def headers(self):
+        """ return header required by embeddedsw repo/library (ie libXil)
+
+        Return
+        ======
+        bspconfig.h content
+        """
+        return {'bspconfig.h': '#define FPU_HARD_FLOAT_ABI_ENABLED 1'}
+
+    @property
+    def libraries(self):
+        """ return software library required by the Zynq7000
+
+        Return
+        ======
+        libXil
+        """
+        return ["libxil"]
+
     def do_finalize(self):
         if self.ps7_name is None:
             raise Exception("PS7 must be set with set_ps7 or set_ps7_xci methods.")
