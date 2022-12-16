@@ -26,6 +26,8 @@ from litex.build.tools import write_to_file
 from litex.soc.cores import cpu
 from litex.soc.integration import export, soc_core
 
+from litex.soc import software
+
 # Helpers ------------------------------------------------------------------------------------------
 
 def _makefile_escape(s):
@@ -117,19 +119,24 @@ class Builder:
         self.generate_doc = generate_doc
 
         # Software packages and libraries.
-        self.software_packages  = []
-        self.software_libraries = []
+        self.software_lib_inst  = []
         for name in soc_software_packages:
             self.add_software_package(name)
-            self.add_software_library(name)
+
+        if self.soc.cpu:
+            for cpu_lib in self.soc.cpu.libraries:
+                self.add_software_package(cpu_lib)
 
     def add_software_package(self, name, src_dir=None):
         if src_dir is None:
             src_dir = os.path.join(soc_directory, "software", name)
-        self.software_packages.append((name, src_dir))
+        self.software_lib_inst.append(software.PackageLibrary.get_library_inst(name,
+            self.software_dir,
+            self.include_dir,
+            src_dir))
 
     def add_software_library(self, name):
-        self.software_libraries.append(name)
+        print("TODO: remove")
 
     def _get_variables_contents(self):
         # Helper.
@@ -143,9 +150,9 @@ class Builder:
                 raise e
 
         # Define packages and libraries.
-        define("PACKAGES",     " ".join(name for name, src_dir in self.software_packages))
-        define("PACKAGE_DIRS", " ".join(src_dir for name, src_dir in self.software_packages))
-        define("LIBS",         " ".join(self.software_libraries))
+        define("PACKAGES",     " ".join(str(inst) for inst in self.software_lib_inst))
+        define("PACKAGE_DIRS", " ".join(inst.src_dir for inst in self.software_lib_inst))
+        define("LIBS",         " ".join(inst.lib for inst in self.software_lib_inst))
 
         # Define CPU variables.
         for k, v in export.get_cpu_mak(self.soc.cpu, self.compile_software):
@@ -160,8 +167,8 @@ class Builder:
         define("COMPILER_RT_DIRECTORY", compiler_rt_directory)
         variables_contents.append("export BUILDINC_DIRECTORY")
         define("BUILDINC_DIRECTORY", self.include_dir)
-        for name, src_dir in self.software_packages:
-            define(name.upper() + "_DIRECTORY", src_dir)
+        for inst in self.software_lib_inst:
+            define(str(inst).upper() + "_DIRECTORY", inst.src_dir)
 
         # Define BIOS variables.
         define("LTO", f"{self.bios_lto:d}")
@@ -228,6 +235,17 @@ class Builder:
                 self.soc.sdram.controller.settings.timing)
             write_to_file(os.path.join(self.generated_dir, "sdram_phy.h"), sdram_contents)
 
+        # Generate headers when the CPU has it
+        if self.soc.cpu:
+            cpu_headers = self.soc.cpu.headers
+            for k, v in cpu_headers.items():
+                write_to_file(os.path.join(self.include_dir, k), v)
+
+        # Generate headers when the SoC has it
+        soc_headers = self.soc.headers
+        for k, v in soc_headers.items():
+            write_to_file(os.path.join(self.include_dir, k), v)
+
     def _generate_csr_map(self):
         # JSON Export.
         if self.csr_json is not None:
@@ -270,21 +288,19 @@ class Builder:
 
     def _prepare_rom_software(self):
         # Create directories for all software packages.
-        for name, src_dir in self.software_packages:
-            _create_dir(os.path.join(self.software_dir, name))
+        for inst in self.software_lib_inst:
+            inst.prepare_software()
 
     def _generate_rom_software(self, compile_bios=True):
+        if not self.compile_software:
+            return
         # Compile all software packages.
-         for name, src_dir in self.software_packages:
-
+        for inst in self.software_lib_inst:
             # Skip BIOS compilation when disabled.
-            if name == "bios" and not compile_bios:
+            if str(inst) == "bios" and not compile_bios:
                 continue
             # Compile software package.
-            dst_dir  = os.path.join(self.software_dir, name)
-            makefile = os.path.join(src_dir, "Makefile")
-            if self.compile_software:
-                subprocess.check_call(["make", "-C", dst_dir, "-f", makefile])
+            inst.build_software()
 
     def _initialize_rom_software(self):
         # Get BIOS data from compiled BIOS binary.
