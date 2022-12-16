@@ -247,6 +247,20 @@ class SoCCore(LiteXSoC):
     def add_csr_region(self, name, origin, busword, obj):
         self.csr_regions[name] = SoCCSRRegion(origin, busword, obj)
 
+    @property
+    def headers(self):
+        """  When a SoCCore based class have to fill one or more headers this
+        method must be overloaded to return a dict where keys are headers
+        file name and value are headers file content.
+        Mainly required for Zynq where xparameters.h must be provided
+        to set uart's address and memory base address / size.
+
+        Return
+        ======
+        couple header file name / content
+        """
+        return {}
+
 # SoCCore arguments --------------------------------------------------------------------------------
 
 def soc_core_args(parser):
