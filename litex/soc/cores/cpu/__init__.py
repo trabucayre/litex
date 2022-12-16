@@ -44,6 +44,30 @@ class CPU(Module):
     def disable_reset_address_check(self):
         self.reset_address_check = False
 
+    @property
+    def libraries(self):
+        """ When a CPU depends on one or more library/ies this property must
+        be overloaded to provides the list
+
+        Return
+        ======
+        libraries needed as a list of string 
+        """
+        return []
+
+    @property
+    def headers(self):
+        """ When a CPU must defines/fills headers this property must be
+        overloaded to provides a dict of headers file name / content. Mainly
+        used for Zynq (or similar) CPU(s).
+
+        Return
+        ======
+        a dict where the key is the header file name and the key header file
+        content
+        """
+        return {}
+
 # CPU None (Used for SoC without a CPU) ------------------------------------------------------------
 
 class CPUNone(CPU):
