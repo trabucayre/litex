@@ -170,6 +170,7 @@ class GenericToolchain:
                 raise ValueError("Clock already constrained to {:.2f}ns, new constraint to {:.2f}ns"
                     .format(self.clocks[clk], period))
         self.clocks[clk] = period
+        return clk
 
     def add_false_path_constraint(self, platform, from_, to, keep=True):
         if keep:

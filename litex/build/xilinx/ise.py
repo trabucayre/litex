@@ -206,7 +206,8 @@ bitgen {bitgen_opt} {build_name}.ncd {build_name}.bit{fail_stmt}
     # them through clock objects like DCM and PLL objects.
 
     def add_period_constraint(self, platform, clk, period):
-        clk.attr.add("keep")
+        if super().add_period_constraint(platform, clk, period, True) is None:
+            return
         platform.add_platform_command(
             """
 NET "{clk}" TNM_NET = "PRD{clk}";
