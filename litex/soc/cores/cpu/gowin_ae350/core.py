@@ -5,11 +5,14 @@
 # Copyright (c) 2021 Gwenhael Goavec-Merou <gwenhael@enjoy-digital.fr>
 # SPDX-License-Identifier: BSD-2-Clause
 
+import os
+
 from migen import *
 
 from litex.gen import *
 
 from litex.soc.interconnect import wishbone, ahb
+from litex.soc.interconnect.csr import *
 from litex.soc.cores.cpu import CPU, CPU_GCC_TRIPLE_RISCV32
 
 # Gowin AE350 --------------------------------------------------------------------------------------
@@ -28,50 +31,72 @@ class GowinAE350(CPU):
     nop                  = "nop"
     io_regions           = {
         # Origin, Length.
-        0xe000_0000: 0x6000_0000
+        0xe800_0000: 0x6000_0000
     }
 
     @property
     def mem_map(self):
         return {
             "rom"         : 0x80000000,
-            "sram"        : 0x00000000,
+            "sram"        : 0x00000000, # DDR/SDRAM Data Memory
+            #"sram"        : 0xa0200000, # DLM
             "peripherals" : 0xf0000000,
-            "csr"         : 0xe0000000,
+            "csr"         : 0xe8000000,
         }
 
     # GCC Flags.
     @property
     def gcc_flags(self):
-        flags =  f" -mabi=ilp32 -march=rv32imafdc"
+        #flags =  f" -mabi=ilp32 -march=rv32imafdc"
+        flags =  f" -mabi=ilp32 -march=rv32i2p0"
         flags += f" -D__AE350__"
         flags += f" -DUART_POLLING"
         return flags
 
     def __init__(self, platform, variant, *args, **kwargs):
-        #super().__init__(*args, **kwargs)
         self.platform       = platform
         self.reset          = Signal()
-        self.ibus           = ibus = wishbone.Interface(data_width=32, address_width=32, addressing="word")
+        self.ibus           = ibus = wishbone.Interface(data_width=32, address_width=32, addressing="byte")
         self.dbus           = dbus = wishbone.Interface(data_width=64, address_width=32, addressing="word")
-        self.pbus           = pbus = wishbone.Interface(data_width=32, address_width=32, addressing="word")
+        self.pbus           = pbus = wishbone.Interface(data_width=32, address_width=32, addressing="byte")
         self.periph_buses   = [ibus, dbus, pbus] # Peripheral buses (Connected to main SoC's bus).
         self.memory_buses   = []                 # Memory buses (Connected directly to LiteDRAM).
-
-        self.interrupt      = Signal(16)
 
         # CPU Instance.
         # -------------
 
-        ahb_ddr        = ahb.AHBInterface(data_width=64, address_width=32)
+        self.ahb_ddr   = ahb_ddr   = ahb.AHBInterface(data_width=64, address_width=32)
         self.ahb_flash = ahb_flash = ahb.AHBInterface(data_width=32, address_width=32)
         ahb_exts       = ahb.AHBInterface(data_width=32, address_width=32)
+        self.presetn   = Signal()
+        self.hresetn   = Signal()
+        self.ddr_rstn  = Signal()
+        self.core_rstn = Signal()
+
+        self._inv_rst = CSRStorage()
 
         self.comb += [
             ahb_flash.sel.eq(1),
+            ahb_ddr.sel.eq(1),
             ahb_flash.size.eq(0b010),
             ahb_flash.burst.eq(0),
+            If(~self._inv_rst.storage[0],
+                self.core_rstn.eq(~(ResetSignal("sys") | self.reset)),
+            ).Else(
+                self.core_rstn.eq((ResetSignal("sys") | self.reset)),
+            ),
         ]
+
+        self.ddr_hrdata = Signal(64)
+        self.ddr_hready = Signal()
+        self.ddr_hresp  = Signal()
+        self.ddr_haddr  = Signal(32)
+        self.ddr_hburst = Signal(3)
+        self.ddr_hsize  = Signal(3)
+        self.ddr_hprot  = Signal(4)
+        self.ddr_htrans = Signal(2)
+        self.ddr_hwdata = Signal(64)
+        self.ddr_hwrite = Signal()
 
         self.cpu_params = dict(
             # Clk/Rst.
@@ -79,18 +104,18 @@ class GowinAE350(CPU):
             i_DDR_CLK        = ClockSignal("sys"),
             i_AHB_CLK        = ClockSignal("sys"),
             i_APB_CLK        = ClockSignal("sys"),
-            i_POR_N          = ~(ResetSignal("sys") | self.reset),
-            i_HW_RSTN        = ~(ResetSignal("sys") | self.reset),
-            o_PRESETN        = Open(), # apb_clk_in synced reset_n output
-            o_HRESETN        = Open(), # ahb_clk_in synced reset_n output
-            o_DDR_RSTN       = Open(), # ddr_clk_in synced reset_n output
+            i_POR_N          = 1,
+            i_HW_RSTN        = self.core_rstn, #~(ResetSignal("sys") | self.reset),
+            o_PRESETN        = self.presetn,   # apb_clk_in synced reset_n output
+            o_HRESETN        = self.hresetn,   # ahb_clk_in synced reset_n output
+            o_DDR_RSTN       = self.ddr_rstn,  # ddr_clk_in synced reset_n output
 
             # CE.
             i_CORE_CE        = 1,
             i_AXI_CE         = 1,
             i_DDR_CE         = 1,
             i_AHB_CE         = 1,
-            i_APB_CE         = Constant(0b10100101, 8), # WDT, I2C, PIT, GPIO, SPI, UART2, UART1, ? 
+            i_APB_CE         = Constant(0b10100101, 8), # WDT, I2C, PIT, GPIO, SPI, UART2, UART1, APB
             i_APB2AHB_CE     = 1, # 1 when apb_clk_in = ahb_clk_in
 
             # WFI.
@@ -156,16 +181,16 @@ class GowinAE350(CPU):
             i_EXTM_HWRITE    = 0,
 
             # SDRAM port for Fabric.
-            i_DDR_HRDATA     = ahb_ddr.rdata,
-            i_DDR_HREADY     = ahb_ddr.readyout,
-            i_DDR_HRESP      = ahb_ddr.resp,
-            o_DDR_HADDR      = ahb_ddr.addr,
-            o_DDR_HBURST     = ahb_ddr.burst,
-            o_DDR_HPROT      = ahb_ddr.prot,
-            o_DDR_HSIZE      = ahb_ddr.size,
-            o_DDR_HTRANS     = ahb_ddr.trans,
-            o_DDR_HWDATA     = ahb_ddr.wdata,
-            o_DDR_HWRITE     = ahb_ddr.write,
+            i_DDR_HRDATA     = self.ddr_hrdata,
+            i_DDR_HREADY     = self.ddr_hready,
+            i_DDR_HRESP      = self.ddr_hresp,
+            o_DDR_HADDR      = self.ddr_haddr,
+            o_DDR_HBURST     = self.ddr_hburst,
+            o_DDR_HPROT      = self.ddr_hprot,
+            o_DDR_HSIZE      = self.ddr_hsize,
+            o_DDR_HTRANS     = self.ddr_htrans,
+            o_DDR_HWDATA     = self.ddr_hwdata,
+            o_DDR_HWRITE     = self.ddr_hwrite,
 
             # GPIOs.
             i_GPIO_IN        = Constant(0, 32),
@@ -174,12 +199,12 @@ class GowinAE350(CPU):
 
             i_SCAN_EN        = 0,
             i_SCAN_TEST      = 0,
-            i_SCAN_IN        = Constant(0, 20),
+            i_SCAN_IN        = Constant(0xfffff, 20),
             o_SCAN_OUT       = Open(20),
-            i_INTEG_TCK      = 0,
-            i_INTEG_TDI      = 0,
-            i_INTEG_TMS      = 0,
-            i_INTEG_TRST     = 0,
+            i_INTEG_TCK      = 1,
+            i_INTEG_TDI      = 1,
+            i_INTEG_TMS      = 1,
+            i_INTEG_TRST     = 1,
             o_INTEG_TDO      = Open(),
 
             # SRAM?.
@@ -259,7 +284,63 @@ class GowinAE350(CPU):
         # DDR.
         # ----
 
-        self.submodules += ahb.AHB2Wishbone(ahb_ddr, self.dbus)
+        USE_SRAM_MODEL = 3
+        if USE_SRAM_MODEL in [1, 2]:
+            self.comb += [
+                self.ddr_hrdata.eq(ahb_ddr.rdata),
+                ahb_ddr.readyout.eq(self.ddr_hready),
+                ahb_ddr.resp.eq(self.ddr_hresp),
+                self.ddr_haddr.eq(ahb_ddr.addr),
+                self.ddr_hburst.eq(ahb_ddr.burst),
+                self.ddr_hprot.eq(ahb_ddr.prot),
+                self.ddr_hsize.eq(ahb_ddr.size),
+                self.ddr_htrans.eq(ahb_ddr.trans),
+                self.ddr_hwdata.eq(ahb_ddr.wdata),
+                self.ddr_hwrite.eq(ahb_ddr.write),
+            ]
+            if USE_SRAM_MODEL == 1:
+                self.ram_bus = ram_bus = wishbone.Interface(
+                    data_width    = 64,
+                    address_width = 32,
+                    addressing    = "word"
+                )
+                self.ram = ram = wishbone.SRAM(2*64*1024,
+                    bus       = ram_bus,
+                    read_only = False,
+                    name      = "cpu_ram"
+                )
+                self.add_module(name="cpu_ram", module=ram)
+                self.submodules += ahb.AHB2Wishbone(ahb_ddr, ram_bus)
+            else:
+                self.submodules += ahb.AHB2Wishbone(ahb_ddr, self.dbus)
+        elif USE_SRAM_MODEL == 3:
+            dlm_params = dict(
+                i_HCLK     = ClockSignal("sys"),
+                i_HRESETn  = self.ddr_rstn,
+                i_HTRANS   = self.ddr_htrans,
+                i_HSIZE    = self.ddr_hsize,
+                i_HWRITE   = self.ddr_hwrite,
+                i_HADDR    = self.ddr_haddr,
+                i_HWDATA   = self.ddr_hwdata,
+                o_HREADYOUT= self.ddr_hready,
+                o_HRESP    = self.ddr_hresp,
+                o_HRDATA   = self.ddr_hrdata,
+                # burst, prot unused
+            )
+
+            self.specials += Instance("gw_ahb_dlm_top", **dlm_params)
+            curr_dir = os.getcwd()
+            sources  = ["gw_ahb_dlm_config.v", "gw_ahb_dlm_top.v", "gw_ahb_dlm.v"]
+            for s in sources:
+                os.system(f"wget www.trabucayre.com/gw_ahb_dlm/{s}")
+            for s in sources:
+                self.platform.add_source(os.path.join(curr_dir, s))
+        else:
+            self.comb += [
+                self.ddr_hready.eq(0),
+                self.ddr_hresp.eq(0),
+                self.ddr_hrdata.eq(0),
+            ]
 
         # Flash (Boot Flash memory connected via AHB).
         # --------------------------------------------
@@ -292,4 +373,4 @@ class GowinAE350(CPU):
         )
 
     def do_finalize(self):
-        self.specials += Instance("Riscv_AE350_SOC", **self.cpu_params)
+        self.specials += Instance("AE350_SOC", **self.cpu_params)
