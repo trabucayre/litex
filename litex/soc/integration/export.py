@@ -275,11 +275,13 @@ def _determine_ctype_and_stride_c(size, alignment):
     stride = alignment // 8
     return ctype, stride
 
-def _generate_csr_read_function_c(reg_name, reg_base, nwords, busword, ctype, stride, csr_base, with_csr_base_define):
+def _generate_csr_read_function_c(reg_name, reg_base, nwords, busword, ordering, ctype, stride, csr_base, with_csr_base_define):
     read_function = f"static inline {ctype} {reg_name}_read(void) {{\n"
     if nwords > 1:
-        read_function += f"\t{ctype} r = csr_read_simple({_get_csr_addr(csr_base, reg_base, with_csr_base_define)});\n"
-        for sub in range(1, nwords):
+        start, stop, step = (0, nwords, 1) if ordering == "big" else (nwords-1, -1, -1)
+        read_function += f"\t{ctype} r = csr_read_simple({_get_csr_addr(csr_base, reg_base + start * stride, with_csr_base_define)});\n"
+        start += step
+        for sub in range(start, stop, step):
             read_function += f"\tr <<= {busword};\n"
             read_function += f"\tr |= csr_read_simple({_get_csr_addr(csr_base, reg_base + sub * stride, with_csr_base_define)});\n"
         read_function += "\treturn r;\n}\n"
@@ -287,16 +289,16 @@ def _generate_csr_read_function_c(reg_name, reg_base, nwords, busword, ctype, st
         read_function += f"\treturn csr_read_simple({_get_csr_addr(csr_base, reg_base, with_csr_base_define)});\n}}\n"
     return read_function
 
-def _generate_csr_write_function_c(reg_name, reg_base, nwords, busword, ctype, stride, csr_base, with_csr_base_define):
+def _generate_csr_write_function_c(reg_name, reg_base, nwords, busword, ordering, ctype, stride, csr_base, with_csr_base_define):
     write_function = f"static inline void {reg_name}_write({ctype} v) {{\n"
     for sub in range(nwords):
-        shift = (nwords - sub - 1) * busword
+        shift = ((nwords - sub - 1) * busword) if ordering == "big" else (sub * busword)
         v_shift = f"v >> {shift}" if shift else "v"
         write_function += f"\tcsr_write_simple({v_shift}, {_get_csr_addr(csr_base, reg_base + sub * stride, with_csr_base_define)});\n"
     write_function += "}\n"
     return write_function
 
-def _get_csr_read_write_access_functions_c(reg_name, reg_base, nwords, busword, alignment, read_only, csr_base, with_csr_base_define):
+def _get_csr_read_write_access_functions_c(reg_name, reg_base, nwords, busword, ordering, alignment, read_only, csr_base, with_csr_base_define):
     result = ""
     size   = nwords * busword // 8
 
@@ -304,13 +306,13 @@ def _get_csr_read_write_access_functions_c(reg_name, reg_base, nwords, busword, 
     if ctype is None:
         return result
 
-    result += _generate_csr_read_function_c(reg_name, reg_base, nwords, busword, ctype, stride, csr_base, with_csr_base_define)
+    result += _generate_csr_read_function_c(reg_name, reg_base, nwords, busword, ordering, ctype, stride, csr_base, with_csr_base_define)
     if not read_only:
-        result += _generate_csr_write_function_c(reg_name, reg_base, nwords, busword, ctype, stride, csr_base, with_csr_base_define)
+        result += _generate_csr_write_function_c(reg_name, reg_base, nwords, busword, ordering, ctype, stride, csr_base, with_csr_base_define)
 
     return result
 
-def _generate_csr_region_access_functions_c(name, region, origin, alignment, csr_base, with_csr_base_define):
+def _generate_csr_region_access_functions_c(name, region, origin, alignment, ordering, csr_base, with_csr_base_define):
     base_define = with_csr_base_define and not isinstance(region, MockCSRRegion)
     region_defs = f"\n/* {name.upper()} Access Functions */\n"
 
@@ -322,6 +324,7 @@ def _generate_csr_region_access_functions_c(name, region, origin, alignment, csr
                 reg_base              = origin,
                 nwords                = nr,
                 busword               = region.busword,
+                ordering              = ordering,
                 alignment             = alignment,
                 read_only             = getattr(csr, "read_only", False),
                 csr_base              = csr_base,
@@ -390,6 +393,7 @@ def get_csr_header(regions, constants, csr_base=None, with_csr_base_define=True,
     """
 
     alignment = constants.get("CONFIG_CSR_ALIGNMENT", 32)
+    ordering  = constants.get("CONFIG_CSR_ORDERING", "big")
     r = generated_banner("//")
 
     # CSR Includes.
@@ -420,7 +424,7 @@ def get_csr_header(regions, constants, csr_base=None, with_csr_base_define=True,
         r += "#if LITEX_CSR_ACCESS_FUNCTIONS\n"
         for name, region in regions.items():
             origin = region.origin - _csr_base
-            r += _generate_csr_region_access_functions_c(name, region, origin, alignment, csr_base, with_csr_base_define)
+            r += _generate_csr_region_access_functions_c(name, region, origin, alignment, ordering, csr_base, with_csr_base_define)
         r += "#endif /* LITEX_CSR_ACCESS_FUNCTIONS */\n"
 
     # CSR Registers Field Access Functions.
