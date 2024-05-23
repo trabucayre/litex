@@ -47,6 +47,11 @@ class KianV(CPU):
     nop                  = "nop"
     io_regions           = {0x8000_0000: 0x8000_0000} # Origin, Length.
 
+    # Arch.
+    @staticmethod
+    def get_arch():
+        return "rv32i2p0_ma"
+
     # GCC Flags.
     @property
     def gcc_flags(self):
@@ -129,6 +134,9 @@ class KianV(CPU):
         vdir = "kianRiscV/linux_socs/kianv_harris_mcycle_edition/kianv_harris_edition"
         platform.add_verilog_include_path(vdir)
         platform.add_source_dir(vdir)
+
+    def add_soc_components(self, soc):
+        soc.add_config("CPU_ISA", self.get_arch())
 
     def do_finalize(self):
         assert hasattr(self, "reset_address")
