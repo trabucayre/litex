@@ -26,6 +26,7 @@ def generate_dts(d, initrd_start=None, initrd_size=None, initrd=None, root_devic
         "vexriscv"   : "riscv",
         "rocket"     : "riscv",
         "naxriscv"   : "riscv",
+        "kianv"      : "riscv",
     }
 
     # CPU Parameters -------------------------------------------------------------------------------
@@ -306,12 +307,21 @@ def generate_dts(d, initrd_start=None, initrd_size=None, initrd=None, root_devic
 
     # SoC ------------------------------------------------------------------------------------------
 
-    dts += """
+    if not "kianv" in cpu_name:
+        dts += """
         soc {{
             #address-cells = <1>;
             #size-cells    = <1>;
             compatible = "simple-bus";
             interrupt-parent = <&intc0>;
+            ranges;
+""".format()
+    else:
+        dts += """
+        soc {{
+            #address-cells = <1>;
+            #size-cells    = <1>;
+            compatible = "simple-bus";
             ranges;
 """.format()
 
@@ -327,7 +337,8 @@ def generate_dts(d, initrd_start=None, initrd_size=None, initrd=None, root_devic
 
     # Interrupt Controller -------------------------------------------------------------------------
 
-    if (cpu_arch == "riscv") and ("rocket" in cpu_name):
+    if (cpu_arch == "riscv") and (cpu_name in ["rocket", "kianv"]):
+        clint_base = {True: 0x11000000, False: d["memories"]["clint"]["base"]}["kianv" in cpu_name]
         # FIXME  : L4 definitiion?
         # CHECKME: interrupts-extended.
         dts += """
@@ -339,7 +350,7 @@ def generate_dts(d, initrd_start=None, initrd_size=None, initrd=None, root_devic
                 reg-names = "control";
             }};
 """.format(
-        clint_base=d["memories"]["clint"]["base"],
+        clint_base=clint_base,
         cpu_mapping =("\n" + " "*20).join(["&L{} 3 &L{} 7".format(cpu, cpu) for cpu in range(ncpus)]))
     if cpu_arch == "riscv":
         if "rocket" in cpu_name:
@@ -350,7 +361,8 @@ def generate_dts(d, initrd_start=None, initrd_size=None, initrd=None, root_devic
         else:
             extra_attr = ""
 
-        dts += """
+        if not "kianv" in cpu_name:
+            dts += """
             intc0: interrupt-controller@{plic_base:x} {{
                 compatible = "sifive,fu540-c000-plic", "sifive,plic-1.0.0";
                 reg = <0x{plic_base:x} 0x400000>;
