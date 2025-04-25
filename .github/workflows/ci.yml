@@ -43,6 +43,10 @@ jobs:
           sudo python3 litex_setup.py --gcc=openrisc
           sudo python3 litex_setup.py --gcc=powerpc
 
+      # Install OSS CAD Suite
+      - name: Install OSS CAD Suite
+        uses: YosysHQ/setup-oss-cad-suite@v3
+
       # Build / Install GHDL
       - name: Build GHDL
         run: |
