@@ -18,7 +18,7 @@ class MicrosemiPlatform(GenericPlatform):
     def __init__(self, *args, toolchain="libero_soc_polarfire", **kwargs):
         GenericPlatform.__init__(self, *args, **kwargs)
         if toolchain == "libero_soc_polarfire":
-            self.toolchain = libero_soc.MicrosemiLiberoSoCPolarfireToolchain()
+            self.toolchain = libero_soc.MicrosemiLiberoSoCToolchain()
         else:
             raise ValueError(f"Unknown toolchain {toolchain}")
 
